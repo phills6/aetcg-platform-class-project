@@ -24,7 +24,8 @@ from app.metrics import (
 logger = logging.getLogger(__name__)
 
 # Use the same Redis connection pattern as in main.py for consistency
-redis_connection = Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=0)
+redis_connection = Redis(host=settings.REDIS_HOST,
+                         port=settings.REDIS_PORT, db=0)
 task_queue = Queue("aetcg_jobs", connection=redis_connection)
 
 
@@ -40,6 +41,7 @@ def update_worker_health_signal():
             logger.error(f"Failed to update worker health signal: {e}")
             time.sleep(5)  # Wait before retrying
 
+
 def process_pipeline_task(payload: dict):
     from pipeline.orchestrator import StateMachineOrchestrator
     start_time = time.time()
@@ -54,14 +56,16 @@ def process_pipeline_task(payload: dict):
 
         # Record successful processing metrics
         processing_time = time.time() - start_time
-        observe_histogram(TICKET_PROCESSING_TIME_SECONDS, processing_time, {"status": "success"})
+        observe_histogram(TICKET_PROCESSING_TIME_SECONDS,
+                          processing_time, {"status": "success"})
         increment_counter(TICKET_PROCESSING_TOTAL, {"status": "success"})
 
         # Extract and record business metrics from result
         if isinstance(result, dict):
             # Risk score
             if "risk_score" in result:
-                observe_histogram(TICKET_RISK_SCORE_DISTRIBUTION, result["risk_score"])
+                observe_histogram(
+                    TICKET_RISK_SCORE_DISTRIBUTION, result["risk_score"])
 
             # Category (if available)
             # Note: category might be in the triage verdict or elsewhere in a real implementation
@@ -75,7 +79,8 @@ def process_pipeline_task(payload: dict):
                     increment_counter(COMPLIANCE_FAIL_TOTAL)
 
         # Cache the final state result for API lookup
-        redis_connection.set(f"cache:{hash(payload['raw_text'])}", json.dumps(result), ex=600)
+        redis_connection.set(
+            f"cache:{hash(payload['raw_text'])}", json.dumps(result), ex=600)
 
         logger.info(json.dumps({
             "event": "task_processed_successfully",
@@ -87,8 +92,10 @@ def process_pipeline_task(payload: dict):
     except Exception as e:
         # Record failure metrics
         processing_time = time.time() - start_time
-        observe_histogram(TICKET_PROCESSING_TIME_SECONDS, processing_time, {"status": "failure"})
-        increment_counter(QUEUE_FAILED_JOBS_TOTAL, {"queue_name": "aetcg_jobs", "failure_reason": "processing_error"})
+        observe_histogram(TICKET_PROCESSING_TIME_SECONDS,
+                          processing_time, {"status": "failure"})
+        increment_counter(QUEUE_FAILED_JOBS_TOTAL, {
+                          "queue_name": "aetcg_jobs", "failure_reason": "processing_error"})
         increment_counter(TICKET_PROCESSING_TOTAL, {"status": "failure"})
 
         logger.error(json.dumps({
@@ -104,10 +111,15 @@ def process_pipeline_task(payload: dict):
         set_gauge(WORKER_STATUS, 1, {"worker_id": "worker_1"})
         set_gauge(QUEUE_PROCESSING_JOBS, 0, {"queue_name": "aetcg_jobs"})
 
+
 def queue_triage_job(payload: dict):
     # Record job enqueue metrics
     increment_counter(TICKET_INGESTION_TOTAL, {"status": "queued"})
-    job = task_queue.enqueue(process_pipeline_task, payload)
+    job = task_queue.enqueue(
+        process_pipeline_task,
+        payload,
+        job_id=payload["ticket_id"]
+    )
 
     # Update queue depth gauge (approximate - in practice you'd get this from Redis)
     # For simplicity, we'll increment/decrement based on enqueue/dequeue
@@ -116,22 +128,27 @@ def queue_triage_job(payload: dict):
 
     return job
 
+
 def main():
     """Main worker entrypoint for running as a background process."""
     # Internal execution target wrapper matching automated Docker environment activations
     logging.basicConfig(level=logging.INFO)
-    print(f"[*] Booting AETCG Background Worker Network Layer connecting to Redis on {settings.REDIS_HOST}...")
+    print(
+        f"[*] Booting AETCG Background Worker Network Layer connecting to Redis on {settings.REDIS_HOST}...")
 
     # Initialize worker metrics
     set_gauge(WORKER_STATUS, 1, {"worker_id": "worker_1"})
-    set_gauge(QUEUE_DEPTH_JOBS, 0, {"queue_name": "aetcg_jobs"})  # Will be updated as jobs come in
+    # Will be updated as jobs come in
+    set_gauge(QUEUE_DEPTH_JOBS, 0, {"queue_name": "aetcg_jobs"})
 
     # Start health signal thread to signal worker liveness
-    health_signal_thread = threading.Thread(target=update_worker_health_signal, daemon=True)
+    health_signal_thread = threading.Thread(
+        target=update_worker_health_signal, daemon=True)
     health_signal_thread.start()
 
     worker = Worker([task_queue], connection=redis_connection)
     worker.work()
+
 
 if __name__ == "__main__":
     main()
